@@ -1,6 +1,9 @@
 import os  # To help define the path to the database file
+from email import message
 
 from flask import Flask, jsonify, request
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required
+from flask_mail import Mail, Message
 from flask_marshmallow import Marshmallow
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import Column, Float, Integer, String
@@ -12,9 +15,16 @@ basedir = os.path.abspath(
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + os.path.join(
     basedir, "planets.db"
 )
+app.config["JWT_SECRET_KEY"] = "super secret"
+app.config["MAIL_SERVER"] = "smtp.mailtrap.io"
+app.config["MAIL_USERNAME"] = "114d82b2940ba7"
+app.config["MAIL_PASSWORD"] = "7a83000483d916"
+
 
 db = SQLAlchemy(app)
 ma = Marshmallow(app)
+jwt = JWTManager(app)
+mail = Mail(app)
 
 
 @app.cli.command("db_create")
@@ -113,6 +123,60 @@ def planets():
     planets_list = Planet.query.all()
     result = planets_schema.dump(planets_list)
     return result
+
+
+@app.route("/register/", methods=["POST"])
+def register():
+    email = request.form["email"]
+    test = User.query.filter_by(
+        email=email
+    ).first()  # this will call the database and check if user's already registerd or not
+    if test:
+        return jsonify(message="That email already exists."), 409
+    else:
+        first_name = request.form["first_name"]
+        last_name = request.form["last_name"]
+        password = request.form["password"]
+        user = User(
+            first_name=first_name, last_name=last_name, email=email, password=password
+        )
+        db.session.add(user)
+        db.session.commit()
+        return jsonify(message="User created successfully."), 201
+
+
+@app.route("/login/", methods=["POST"])
+def login():
+    if request.is_json:
+        email = request.json["email"]
+        password = request.json["password"]
+    else:
+        email = request.form["email"]
+        password = request.form["password"]
+
+    test = User.query.filter_by(
+        email=email, password=password
+    ).first()  # .first() is either going to return something or not.
+    if test:
+        access_token = create_access_token(identity=email)
+        return jsonify(message="Login succeeded!", access_token=access_token)
+    else:
+        return jsonify(message="Bad email or password"), 401
+
+
+@app.route("/retrieve_password/<string:email>", methods=["GET"])
+def retrieve_password(email: str):
+    user = User.query.filter_by(email=email).first()
+    if user:
+        msg = Message(
+            "your planetary API password is " + user.password,
+            sender="admin@planetary-api.com",
+            recipients=[email],
+        )
+        mail.send(msg)
+        return jsonify(message="Password sent to " + email)
+    else:
+        return jsonify(message="That email does not exist."), 401
 
 
 # database models
